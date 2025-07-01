@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name          More Xtoys
-// @name:zh-CN    Xtoys 玩具多多
+// @name          More XToys
+// @name:zh-CN    XToys 玩具多多
 // @namespace     https://github.com/forest-devil/
 // @version       1.37
 // @description   Takes over XToys's custom serial port toy functionality, replacing it with custom Bluetooth toys (currently supporting Roussan).
