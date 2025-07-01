@@ -1,11 +1,10 @@
 // ==UserScript==
-// @name          More XToys - Optimized
-// @name:zh-CN    Xtoys 玩具多多 (优化版)
-// @namespace     http://tampermonkey.net/
-// @version       1.11
-// @description   Intercepts Web Serial API calls, and redirects to a BLE device, simulating a SerialPort object. Optimized for multi-device debug logging and error handling.
-// @description:zh-CN 拦截Web Serial请求并重定向到蓝牙BLE设备，同时模拟一个SerialPort对象。优化了多设备调试日志和错误处理。
+// @name          Xtoys 玩具多多
+// @namespace     https://github.com/forest-devil/
+// @version       1.14
+// @description   利用XToys的串行接口支持更多蓝牙玩具。
 // @author        forest-devil & Gemini
+// @license       Apache
 // @match         https://xtoys.app/*
 // @grant         unsafeWindow
 // @grant         GM_log
@@ -15,6 +14,8 @@
 // @grant         GM_setValue
 // @run-at        document-start
 // @icon          https://xtoys.app/icons/favicon-96x96.png
+// @downloadURL   https://raw.githubusercontent.com/forest-devil/More-XToys/main/userscript.js
+// @updateURL     https://raw.githubusercontent.com/forest-devil/More-XToys/main/userscript.js
 // ==/UserScript==
 
 (function() {
@@ -32,6 +33,18 @@
     // 用于调试模式下生成友好设备名的计数器
     // 每次脚本启动时重置为 0，以满足刷新页面后从 #1 开始的需求
     let debugDeviceCounter = 0;
+
+    // --- 模拟 USB ID 常量 ---
+    // 这些常量用于为模拟串口设备创建唯一的 USB ID
+    // MOCK_USB_VENDOR_ID 代表我们模拟设备的通用制造商 ID
+    const MOCK_USB_VENDOR_ID = 0x1A86;
+    // MOCK_USB_PRODUCT_ID_BASE 提供了产品 ID 的起始基数，用于生成唯一 ID
+    const MOCK_USB_PRODUCT_ID_BASE = 0x7523;
+
+    // 一个全局 Map，用于存储活跃的可写流，键是唯一的标识符 (device.id 或 JSON 中的 id)
+    // 这允许我们根据 JSON 负载中的 'id' 字段将命令路由到特定设备。
+    /** @type {Map<string, WritableStream>} */
+    const activeCommandStreams = new Map();
 
     // 注册菜单命令来切换调试模式
     GM_registerMenuCommand(
@@ -91,8 +104,11 @@
      * @property {BluetoothRemoteGATTCharacteristic | null} notifyCharacteristic - 通知特性 (可能没有)
      * @property {Object} activeProtocol - 当前设备使用的协议配置
      * @property {MockSerialPort} mockPortInstance - 关联的模拟 SerialPort 实例
+     * @property {string | null} deviceJsonId - XToys 为此设备提供的 'id' 字段 (如果有)。
+     * @property {number} usbVendorId - 此设备的模拟 USB 供应商 ID。
+     * @property {number} usbProductId - 此设备的模拟 USB 产品 ID。
      */
-    const activeConnections = new Map(); // 使用 Map 存储，key 可以是 device.id
+    const activeConnections = new Map(); // 使用 Map 存储，键可以是 device.id
 
     /**
      * 重置并移除某个设备的连接状态
@@ -116,6 +132,16 @@
             if (state.device && state.device.gatt.connected) {
                 state.device.gatt.disconnect();
             }
+
+            // 同时从 activeCommandStreams Map 中移除 (如果存在)
+            if (state.deviceJsonId && activeCommandStreams.has(state.deviceJsonId)) {
+                activeCommandStreams.delete(state.deviceJsonId);
+                console.log(`[Xtoys 玩具多多] 已移除 JSON ID 为 '${state.deviceJsonId}' 的命令流。`);
+            } else if (activeCommandStreams.has(state.device.id)) { // 如果没有 JSON ID，则回退到设备 ID
+                 activeCommandStreams.delete(state.device.id);
+                 console.log(`[Xtoys 玩具多多] 已移除设备 ID 为 '${state.device.id}' 的命令流。`);
+            }
+
             activeConnections.delete(deviceId);
             console.log(`[Xtoys 玩具多多] 已断开并移除设备 ${deviceFriendlyName} 的连接状态。当前活跃连接数: ${activeConnections.size}`);
         }
@@ -154,15 +180,17 @@
             }
             const activeProtocol = PROTOCOLS[defaultProtocolName];
 
-            // 递增计数器
+            // 递增计数器，用于生成调试设备的唯一 ID
             debugDeviceCounter++;
-            console.log(`[Xtoys 玩具多多 调试模式] debugDeviceCounter 当前值: ${debugDeviceCounter}`); // <-- 新增日志
+            console.log(`[Xtoys 玩具多多 调试模式] debugDeviceCounter 当前值: ${debugDeviceCounter}`);
 
-            // 为调试设备生成一个唯一的友好名称
-            const debugDeviceId = `debug-device-${Date.now()}-${debugDeviceCounter}`; // 使用递增后的计数器
-            const debugDeviceName = `调试设备 #${debugDeviceCounter}`; // 使用递增后的计数器
+            // 为调试设备生成唯一的友好名称和模拟 USB ID
+            const debugDeviceId = `debug-device-${Date.now()}-${debugDeviceCounter}`;
+            const debugDeviceName = `调试设备 #${debugDeviceCounter}`;
+            const mockUsbProductId = MOCK_USB_PRODUCT_ID_BASE + debugDeviceCounter; // 为每个调试设备生成唯一的 Product ID
+
             console.log(`[Xtoys 玩具多多 调试模式] 正在使用协议 "${defaultProtocolName}" 模拟设备 "${debugDeviceName}"。`);
-            console.log(`[Xtoys 玩具多多 调试模式] 生成的设备ID: ${debugDeviceId}`); // <-- 新增日志
+            console.log(`[Xtoys 玩具多多 调试模式] 生成的设备ID: ${debugDeviceId}, 模拟 USB 产品ID: 0x${mockUsbProductId.toString(16)}`);
 
             const debugConnectionState = {
                 device: { id: debugDeviceId, name: debugDeviceName }, // 模拟 device 对象，包含友好名称
@@ -170,11 +198,19 @@
                 writeCharacteristic: null, // 在调试模式下不实际使用
                 notifyCharacteristic: null, // 在调试模式下不实际使用
                 activeProtocol: activeProtocol,
-                mockPortInstance: null // 将在 createMockSerialPort 中赋值
+                mockPortInstance: null, // 将在 createMockSerialPort 中赋值
+                deviceJsonId: null, // 调试设备初始没有 JSON 'id'
+                usbVendorId: MOCK_USB_VENDOR_ID,
+                usbProductId: mockUsbProductId
             };
             activeConnections.set(debugDeviceId, debugConnectionState);
             const mockPort = createMockSerialPort(debugConnectionState);
             debugConnectionState.mockPortInstance = mockPort;
+
+            // 将此模拟端口的可写流添加到全局路由 Map 中，键为其内部 ID
+            activeCommandStreams.set(debugDeviceId, mockPort.writable);
+            console.log(`[Xtoys 玩具多多] 已将调试设备 '${debugDeviceId}' 添加到命令流 Map。`);
+
             return mockPort;
         }
 
@@ -235,6 +271,10 @@
                 throw new Error(`在所选设备 ${deviceFriendlyName} 上找不到匹配的服务或写入特性。`);
             }
 
+            // 为真实蓝牙设备生成一个唯一的模拟 USB 产品 ID
+            // 使用 Date.now() 的一部分，以确保每次连接的 Product ID 都是不同的
+            const mockUsbProductId = MOCK_USB_PRODUCT_ID_BASE + (Date.now() % 10000);
+
             // 存储新的连接状态
             const newConnectionState = {
                 device: device,
@@ -242,13 +282,21 @@
                 writeCharacteristic: writeCharacteristic,
                 notifyCharacteristic: notifyCharacteristic,
                 activeProtocol: activeProtocol,
-                mockPortInstance: null // 将在 createMockSerialPort 中赋值
+                mockPortInstance: null, // 将在 createMockSerialPort 中赋值
+                deviceJsonId: null, // 真实设备初始没有 JSON 'id'
+                usbVendorId: MOCK_USB_VENDOR_ID,
+                usbProductId: mockUsbProductId
             };
             activeConnections.set(device.id, newConnectionState); // 将新连接存储到 Map 中
 
-            console.log(`[Xtoys 玩具多多] 设备 ${deviceFriendlyName} 蓝牙连接成功并准备就绪。当前活跃连接数: ${activeConnections.size}`);
+            console.log(`[Xtoys 玩具多多] 设备 ${deviceFriendlyName} 蓝牙连接成功并准备就绪。模拟 USB 产品ID: 0x${mockUsbProductId.toString(16)}。当前活跃连接数: ${activeConnections.size}`);
             const mockPort = createMockSerialPort(newConnectionState);
             newConnectionState.mockPortInstance = mockPort; // 将模拟端口实例也保存到状态中
+
+            // 将真实设备添加到命令流 Map 中，键为蓝牙设备 ID
+            activeCommandStreams.set(device.id, mockPort.writable);
+            console.log(`[Xtoys 玩具多多] 已将真实设备 '${device.id}' 添加到命令流 Map。`);
+
             return mockPort;
 
         } catch (error) {
@@ -267,36 +315,90 @@
      * @returns {object} 一个包含可写流的模拟 Port 对象
      */
     function createMockSerialPort(connectionState) {
-        const deviceFriendlyName = connectionState.device.name || `ID: ${connectionState.device.id}`; // 获取更友好的名称
+        // 获取更友好的设备名称，用于日志和 getInfo().deviceName
+        // 优先使用 XToys JSON ID，然后是连接状态中的设备名称，最后是通用的蓝牙 ID 字符串
+        const deviceFriendlyName = connectionState.deviceJsonId || connectionState.device.name || `蓝牙设备 ${connectionState.device.id.substring(0, 8)}`;
+
         const mockPort = {
+            // 这个可写流将作为所有来自 XToys 的传入命令的路由器
             writable: new WritableStream({
                 async write(chunk) {
-                    if (!connectionState.activeProtocol) {
-                        console.error(`[Xtoys 玩具多多] 设备 ${deviceFriendlyName} 写入失败: 此端口没有活跃的蓝牙协议。`);
-                        throw new Error("此端口没有活跃的蓝牙协议。");
-                    }
                     try {
                         const commandStr = new TextDecoder().decode(chunk);
                         const command = JSON.parse(commandStr);
-                        console.debug(`[Xtoys 玩具多多] 收到设备 ${deviceFriendlyName} 的模拟端口数据:`, command);
-                        const dataPacket = connectionState.activeProtocol.transform(command);
+                        console.debug(`[Xtoys 玩具多多] 收到原始命令 (来自 ${deviceFriendlyName}):`, command);
+
+                        // 根据命令中的 'id' 字段确定目标设备 ID，
+                        // 如果没有 'id'，则默认为当前连接的设备 ID。
+                        const targetJsonId = command.id;
+                        let targetDeviceId = connectionState.device.id; // 默认为当前端口的设备 ID
+
+                        // 如果 JSON 命令中存在 'id'，则使用它来查找 *实际* 目标连接。
+                        // 如果是调试设备，且 XToys 提供了 'id'，则更新此 mockPort 的 connectionState。
+                        if (targetJsonId) {
+                            // 首先，尝试查找已注册此 JSON ID 的连接。
+                            let foundConnection = null;
+                            for (const conn of activeConnections.values()) {
+                                // 检查此连接的内部设备 ID 或其存储的 JSON ID 是否匹配
+                                if (conn.device.id === targetJsonId || conn.deviceJsonId === targetJsonId) {
+                                    foundConnection = conn;
+                                    break;
+                                }
+                            }
+
+                            // 如果未找到，且这是调试连接，则假定此 JSON ID 适用于 *此* 调试设备。
+                            if (!foundConnection && connectionState.device.id.startsWith('debug-device-')) {
+                                // 对于调试设备，如果它们发送 'id'，我们将其注册。
+                                connectionState.deviceJsonId = targetJsonId;
+                                console.log(`[Xtoys 玩具多多] 调试设备 '${connectionState.device.name}' 现在映射到 JSON ID '${targetJsonId}'。`);
+                                // targetDeviceId 保持 connectionState.device.id，这是正确的
+                            } else if (foundConnection) {
+                                // 找到了匹配 targetJsonId 的连接，使用其内部设备 ID 进行查找
+                                targetDeviceId = foundConnection.device.id;
+                            } else {
+                                // 如果 targetJsonId 存在但与任何已知内部 ID 或 JSON ID 不匹配，
+                                // 则回退到使用 targetJsonId 作为 targetDeviceId，但这可能导致“未找到”的情况
+                                console.debug(`[Xtoys 玩具多多] 命令包含 JSON ID '${targetJsonId}'。未直接找到匹配的活跃连接。回退到将 JSON ID 用作目标。`);
+                                targetDeviceId = targetJsonId; // 尝试使用 JSON ID 作为直接查找键
+                            }
+                        }
+
+                        // 检索确定目标设备的特定连接状态
+                        const targetConnectionState = activeConnections.get(targetDeviceId);
+
+                        if (!targetConnectionState) {
+                            console.warn(`[Xtoys 玩具多多] 未找到内部 ID 为 '${targetDeviceId}' 的活跃连接 (来自 JSON ID: ${targetJsonId || 'N/A'})。命令已跳过。`, command);
+                            return; // 如果没有目标连接，则跳过
+                        }
+
+                        // 使用目标设备的协议转换命令
+                        const dataPacket = targetConnectionState.activeProtocol.transform(command);
+
                         if (dataPacket) {
                             const hexString = `[${Array.from(dataPacket).map(b => b.toString(16).padStart(2, '0')).join(' ')}]`;
+
                             if (DEBUG_MODE) {
-                                console.log(`[Xtoys 玩具多多 调试模式] 模拟向设备 ${deviceFriendlyName} 发送 HEX 数据: ${hexString}`);
+                                // 使用最合适的名称进行调试日志
+                                const logDeviceName = targetConnectionState.deviceJsonId || targetConnectionState.device.name || targetConnectionState.device.id;
+                                console.log(`[Xtoys 玩具多多 调试模式] 正在路由到设备 '${logDeviceName}' (JSON ID: ${targetJsonId || 'N/A'})。发送 HEX 数据: ${hexString}`);
                             } else {
-                                if (!connectionState.writeCharacteristic) {
-                                    console.error(`[Xtoys 玩具多多] 设备 ${deviceFriendlyName} 写入失败: 此端口的蓝牙特性不可用。`);
+                                if (!targetConnectionState.writeCharacteristic) {
+                                    console.error(`[Xtoys 玩具多多] 设备 '${targetConnectionState.device.name || targetConnectionState.device.id}' 写入失败: 此端口的蓝牙特性不可用。`);
                                     throw new Error("此端口的蓝牙特性不可用。");
                                 }
-                                console.debug(`[Xtoys 玩具多多] 已转换为 HEX ${hexString} 并发送到蓝牙设备 ${deviceFriendlyName}...`);
-                                await connectionState.writeCharacteristic.writeValueWithoutResponse(dataPacket);
+                                const logDeviceName = targetConnectionState.deviceJsonId || targetConnectionState.device.name || targetConnectionState.device.id;
+                                console.debug(`[Xtoys 玩具多多] 正在路由到设备 '${logDeviceName}' (JSON ID: ${targetJsonId || 'N/A'})。已转换为 HEX ${hexString} 并发送到蓝牙设备...`);
+                                await targetConnectionState.writeCharacteristic.writeValueWithoutResponse(dataPacket);
                             }
                         } else {
-                            console.warn(`[Xtoys 玩具多多] 设备 ${deviceFriendlyName} 未生成数据包，跳过写入操作。`);
+                            console.warn(`[Xtoys 玩具多多] 设备 '${targetConnectionState.device.name || targetConnectionState.device.id}' 未生成数据包，跳过写入操作。`);
                         }
                     } catch (error) {
                         console.error(`[Xtoys 玩具多多] 设备 ${deviceFriendlyName} 处理和写入数据失败:`, error);
+                        // 如果是 JSON 解析错误，则特别记录
+                        if (error instanceof SyntaxError && error.message.includes("JSON.parse")) {
+                            console.error(`[Xtoys 玩具多多] 可能收到非 JSON 数据: ${new TextDecoder().decode(chunk).substring(0, 100)}...`);
+                        }
                         throw error;
                     }
                 },
@@ -321,12 +423,12 @@
             getInfo() {
                 // 返回与此端口关联的设备信息
                 return {
-                    usbVendorId: 0x1A86, // 这些是模拟值，实际应根据设备信息
-                    usbProductId: 0x7523,
+                    usbVendorId: connectionState.usbVendorId,
+                    usbProductId: connectionState.usbProductId,
                     bluetoothServiceClassId: connectionState.activeProtocol?.serviceUUID || '',
-                    // 添加设备ID和名称以便区分
                     deviceId: connectionState.device.id,
-                    deviceName: connectionState.device.name || `蓝牙设备 ${connectionState.device.id.substring(0, 8)}`
+                    // 优先使用 XToys JSON ID 作为显示名称，然后是内部设备名称，最后是通用蓝牙 ID
+                    deviceName: connectionState.deviceJsonId || connectionState.device.name || `蓝牙设备 ${connectionState.device.id.substring(0, 8)}`
                 };
             },
             async open(options) {
