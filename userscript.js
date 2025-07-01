@@ -2,7 +2,7 @@
 // @name          More XToys
 // @name:zh-CN    XToys 玩具多多
 // @namespace     https://github.com/forest-devil/
-// @version       1.37
+// @version       1.38
 // @description   Takes over XToys's custom serial port toy functionality, replacing it with custom Bluetooth toys (currently supporting Roussan).
 // @description:zh-CN 接管XToys的自定义串口玩具功能，将其替换为自定义蓝牙玩具（当前支持若仙）。
 // @author        forest-devil & Gemini
@@ -79,6 +79,9 @@
                 }
                 // 确保速度值在 0-100 范围内
                 speed = Math.max(0, Math.min(100, parseInt(speed, 10)));
+                // 若仙协议只支持30档速度，需要从0~100转换为0~30
+                // 将速度值从 0-100 映射到 0-30
+                speed = Math.round(speed * 0.3);
                 // 封装数据包: 55 AA 03 01 XX 00
                 return new Uint8Array([0x55, 0xAA, 0x03, 0x01, speed, 0x00]);
             }
