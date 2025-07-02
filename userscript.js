@@ -2,7 +2,7 @@
 // @name          More XToys
 // @name:zh-CN    XToys 玩具多多
 // @namespace     https://github.com/forest-devil/
-// @version       1.39
+// @version       1.41
 // @description   Takes over XToys's custom serial port toy functionality, replacing it with custom Bluetooth toys (currently supporting Roussan).
 // @description:zh-CN 接管XToys的自定义串口功能，替换为通过蓝牙控制玩具（当前支持若仙）。
 // @author        forest-devil & Gemini
@@ -16,8 +16,8 @@
 // @grant         GM_setValue
 // @run-at        document-start
 // @icon          https://xtoys.app/icons/favicon-96x96.png
-// @downloadURL https://raw.githubusercontent.com/forest-devil/More-XToys/main/userscript.js
-// @updateURL https://raw.githubusercontent.com/forest-devil/More-XToys/main/userscript.js
+// @downloadURL   https://raw.githubusercontent.com/forest-devil/More-XToys/main/userscript.js
+// @updateURL     https://raw.githubusercontent.com/forest-devil/More-XToys/main/userscript.js
 // ==/UserScript==
 
 (() => {
@@ -49,6 +49,7 @@
     function toggleDebugMode() {
         DEBUG_MODE = !DEBUG_MODE;
         GM_setValue("DEBUG_MODE", DEBUG_MODE);
+        console.log(`[Xtoys 玩具多多] 调试模式: ${DEBUG_MODE ? '已开启' : '已关闭'}`);
         location.reload();
     }
 
@@ -71,9 +72,9 @@
              */
             transform: command => {
                 // 优先使用 vibrate，其次是 Speed
-                let speed = command.vibrate ?? command.Speed ?? null;
+                let speed = command.vibrate ?? command.speed ?? null;
                 if (speed === null) {
-                    console.warn('[Xtoys 玩具多多] 指令对象中不包含 "vibrate" 或 "Speed" 键。', command);
+                    console.warn('[Xtoys 玩具多多] 指令对象中不包含 "vibrate" 或 "speed" 键。', command);
                     return null;
                 }
                 // 确保速度值在 0-100 范围内
@@ -224,7 +225,7 @@
         let device;
         try {
             let filters = Object.values(PROTOCOLS).map(p => ({ services: [p.serviceUUID] }));
-            console.log('[Xtoys 玩具多多] 正在请求蓝牙设备，搜索条件:', filters);
+            console.info('[Xtoys 玩具多多] 正在请求蓝牙设备，搜索条件:', filters); // 调整为 info
             device = await navigator.bluetooth.requestDevice({filters});
             const deviceFriendlyName = device.name || `ID: ${device.id}`;
             console.info('[Xtoys 玩具多多] 已选择设备: %s', deviceFriendlyName);
@@ -259,8 +260,8 @@
                         try {
                             notifyCharacteristic = await service.getCharacteristic(protocol.notifyUUID);
                             await notifyCharacteristic.startNotifications();
-                            notifyCharacteristic.addEventListener('characteristicvaluechanged', handleNotifications);
                             console.info('[Xtoys 玩具多多] 已订阅通知。');
+                            notifyCharacteristic.addEventListener('characteristicvaluechanged', handleNotifications);
                         } catch (notifyError) {
                             console.warn('[Xtoys 玩具多多] 无法获取或订阅通知特性。', notifyError.message);
                         }
@@ -365,46 +366,23 @@
                         const command = JSON.parse(commandStr);
                         console.debug(`[Xtoys 玩具多多] 收到原始命令 (来自 ${deviceFriendlyName}):`, command);
 
-                        // 根据命令中的 'id' 字段确定目标设备 ID，
-                        // 如果没有 'id'，则默认为当前连接的设备 ID。
-                        const targetXToysDeviceId = command.id;
-                        let targetDeviceId = connectionState.device?.id; // 默认为当前端口的设备 ID
+                        const incomingCommandId = command.id;
 
-                        // 如果 XToys Device ID 存在，则使用它来查找 *实际* 目标连接。
-                        // 如果是调试设备，且 XToys 提供了 'id'，则更新此 mockPort 的 connectionState。
-                        if (targetXToysDeviceId) {
-                            // 首先，尝试查找已注册此 XToys Device ID 的连接。
-                            let foundConnection = null;
-                            for (const conn of activeConnections.values()) {
-                                // 检查此连接的内部设备 ID 或其存储的 XToys Device ID 是否匹配
-                                if (conn.device?.id === targetXToysDeviceId || conn.xtoysDeviceId === targetXToysDeviceId) {
-                                    foundConnection = conn;
-                                    break;
-                                }
-                            }
-
-                            // 如果未找到，且这是调试连接，则假定此 XToys Device ID 适用于 *此* 调试设备。
-                            if (!foundConnection && connectionState.device?.id?.startsWith('debug-device-')) {
-                                // 对于调试设备，如果它们发送 'id'，我们将其注册。
-                                connectionState.xtoysDeviceId = targetXToysDeviceId;
-                                console.info(`[Xtoys 玩具多多] 调试设备 '${connectionState.device.name}' 现在映射到 XToys Device ID '${targetXToysDeviceId}'。`);
-                            } else if (foundConnection) {
-                                // 找到了匹配 targetXToysDeviceId 的连接，使用其内部设备 ID 进行查找
-                                targetDeviceId = foundConnection.device.id;
-                            } else {
-                                // 如果 XToys Device ID 存在但与任何已知内部 ID 或 XToys Device ID 不匹配，
-                                // 则回退到使用 XToys Device ID 作为 targetDeviceId，但这可能导致“未找到”的情况
-                                console.debug(`[Xtoys 玩具多多] 命令包含 XToys Device ID '%s'。未直接找到匹配的活跃连接。回退到将 XToys Device ID 用作目标。`, targetXToysDeviceId);
-                                targetDeviceId = targetXToysDeviceId; // 尝试使用 XToys Device ID 作为直接查找键
-                            }
+                        // 根据 XToys 的保证：在一次连接中，给设备传输的所有命令的id是一致的。
+                        // 因此，如果命令中包含 ID，并且它与当前连接的 xtoysDeviceId 不同，
+                        // 我们就更新 xtoysDeviceId。这确保了 xtoysDeviceId 始终是 XToys 正在使用的 ID。
+                        if (incomingCommandId && connectionState.xtoysDeviceId !== incomingCommandId) {
+                            connectionState.xtoysDeviceId = incomingCommandId;
+                            console.info(`[Xtoys 玩具多多] 设备 '${connectionState.device.name}' (内部ID: ${connectionState.device.id}) 现在映射到 XToys Device ID '${incomingCommandId}'。`);
                         }
 
-                        // 检索确定目标设备的特定连接状态
-                        const targetConnectionState = activeConnections.get(targetDeviceId);
+                        // 目标连接状态始终是当前 writable 流所关联的 connectionState
+                        const targetConnectionState = connectionState;
 
+                        // 确保目标连接状态存在
                         if (!targetConnectionState) {
-                            console.warn(`[Xtoys 玩具多多] 未找到内部 ID 为 '${targetDeviceId}' 的活跃连接 (来自 XToys Device ID: ${targetXToysDeviceId || 'N/A'})。命令已跳过。`, command);
-                            return; // 如果没有目标连接，则跳过
+                            console.warn(`[Xtoys 玩具多多] 未找到目标连接状态 (来自 XToys Device ID: ${incomingCommandId || 'N/A'})。命令已跳过。`, command);
+                            return;
                         }
 
                         // 使用目标设备的协议转换命令
@@ -416,14 +394,14 @@
                             if (DEBUG_MODE) {
                                 // 使用最合适的名称进行调试日志
                                 const logDeviceName = targetConnectionState.xtoysDeviceId || targetConnectionState.device?.name || targetConnectionState.device?.id;
-                                console.debug(`[Xtoys 玩具多多 调试模式] 正在路由到设备 '${logDeviceName}' (XToys Device ID: ${targetXToysDeviceId || 'N/A'})。发送 HEX 数据: ${hexString}`);
+                                console.debug(`[Xtoys 玩具多多 调试模式] 正在路由到设备 '${logDeviceName}' (XToys Device ID: ${incomingCommandId || 'N/A'})。发送 HEX 数据: ${hexString}`);
                             } else {
                                 if (!targetConnectionState.writeCharacteristic) {
                                     console.error(`[Xtoys 玩具多多] 设备 '${targetConnectionState.device?.name || targetConnectionState.device?.id}' 写入失败: 此端口的蓝牙特性不可用。`);
                                     throw new Error("此端口的蓝牙特性不可用。");
                                 }
                                 const logDeviceName = targetConnectionState.xtoysDeviceId || targetConnectionState.device?.name || targetConnectionState.device?.id;
-                                console.debug(`[Xtoys 玩具多多] 正在路由到设备 '${logDeviceName}' (XToys Device ID: ${targetXToysDeviceId || 'N/A'})。已转换为 HEX ${hexString} 并发送到蓝牙设备...`);
+                                console.debug(`[Xtoys 玩具多多] 正在路由到设备 '${logDeviceName}' (XToys Device ID: ${incomingCommandId || 'N/A'})。已转换为 HEX ${hexString} 并发送到蓝牙设备...`);
                                 await targetConnectionState.writeCharacteristic.writeValueWithoutResponse(dataPacket);
                             }
                         } else {
