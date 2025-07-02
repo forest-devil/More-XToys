@@ -2,7 +2,7 @@
 // @name          More XToys
 // @name:zh-CN    XToys 玩具多多
 // @namespace     https://github.com/forest-devil/
-// @version       1.41
+// @version       1.42
 // @description   Takes over XToys's custom serial port toy functionality, replacing it with custom Bluetooth toys (currently supporting Roussan).
 // @description:zh-CN 接管XToys的自定义串口功能，替换为通过蓝牙控制玩具（当前支持若仙）。
 // @author        forest-devil & Gemini
@@ -16,8 +16,8 @@
 // @grant         GM_setValue
 // @run-at        document-start
 // @icon          https://xtoys.app/icons/favicon-96x96.png
-// @downloadURL   https://raw.githubusercontent.com/forest-devil/More-XToys/main/userscript.js
-// @updateURL     https://raw.githubusercontent.com/forest-devil/More-XToys/main/userscript.js
+// @downloadURL https://raw.githubusercontent.com/forest-devil/More-XToys/main/userscript.js
+// @updateURL https://raw.githubusercontent.com/forest-devil/More-XToys/main/userscript.js
 // ==/UserScript==
 
 (() => {
@@ -39,9 +39,9 @@
     // MOCK_USB_PRODUCT_ID_BASE 提供了产品 ID 的起始基数，用于生成唯一 ID
     const MOCK_USB_PRODUCT_ID_BASE = 0x7523;
 
-    // 一个全局 Map，用于存储活跃的可写流，键是唯一的标识符 (device.id 或 XToys Device ID)
-    /** @type {Map<string, WritableStream>} */
-    const activeCommandStreams = new Map();
+    // 移除了 activeCommandStreams Map，因为它不再用于命令路由。
+    // /** @type {Map<string, WritableStream>} */
+    // const activeCommandStreams = new Map();
 
     /**
      * 切换调试模式并刷新页面。
@@ -144,14 +144,14 @@
             });
         }
 
-        // 同时从 activeCommandStreams Map 中移除 (如果存在)
-        if (state.xtoysDeviceId && activeCommandStreams.has(state.xtoysDeviceId)) {
-            activeCommandStreams.delete(state.xtoysDeviceId);
-            console.info(`[Xtoys 玩具多多] 已移除 XToys Device ID 为 '${state.xtoysDeviceId}' 的命令流。`);
-        } else if (activeCommandStreams.has(state.device?.id)) { // 如果没有 XToys Device ID，则回退到设备 ID
-             activeCommandStreams.delete(state.device.id);
-             console.info(`[Xtoys 玩具多多] 已移除设备 ID 为 '${state.device?.id}' 的命令流。`);
-        }
+        // 移除了从 activeCommandStreams Map 中移除的逻辑，因为该 Map 已被移除。
+        // if (state.xtoysDeviceId && activeCommandStreams.has(state.xtoysDeviceId)) {
+        //     activeCommandStreams.delete(state.xtoysDeviceId);
+        //     console.info(`[Xtoys 玩具多多] 已移除 XToys Device ID 为 '${state.xtoysDeviceId}' 的命令流。`);
+        // } else if (activeCommandStreams.has(state.device?.id)) { // 如果没有 XToys Device ID，则回退到设备 ID
+        //      activeCommandStreams.delete(state.device.id);
+        //      console.info(`[Xtoys 玩具多多] 已移除设备 ID 为 '${state.device?.id}' 的命令流。`);
+        // }
 
         activeConnections.delete(deviceId);
         console.info(`[Xtoys 玩具多多] 已断开并移除设备 ${deviceFriendlyName} 的连接状态。当前活跃连接数: ${activeConnections.size}`);
@@ -214,9 +214,9 @@
             const mockPort = createMockSerialPort(debugConnectionState);
             debugConnectionState.mockPortInstance = mockPort;
 
-            // 将此模拟端口的可写流添加到全局路由 Map 中，键为其内部 ID
-            activeCommandStreams.set(debugDeviceId, mockPort.writable);
-            console.info(`[Xtoys 玩具多多] 已将调试设备 '${debugDeviceId}' 添加到命令流 Map。`);
+            // 移除了将此模拟端口的可写流添加到全局路由 Map 中的逻辑，因为该 Map 已被移除。
+            // activeCommandStreams.set(debugDeviceId, mockPort.writable);
+            // console.info(`[Xtoys 玩具多多] 已将调试设备 '${debugDeviceId}' 添加到命令流 Map。`);
 
             return mockPort;
         }
@@ -308,9 +308,9 @@
             const mockPort = createMockSerialPort(newConnectionState);
             newConnectionState.mockPortInstance = mockPort; // 将模拟端口实例也保存到状态中
 
-            // 将真实设备添加到命令流 Map 中，键为蓝牙设备 ID
-            activeCommandStreams.set(device.id, mockPort.writable);
-            console.info(`[Xtoys 玩具多多] 已将真实设备 '${device.id}' 添加到命令流 Map。`);
+            // 移除了将真实设备添加到命令流 Map 中的逻辑，因为该 Map 已被移除。
+            // activeCommandStreams.set(device.id, mockPort.writable);
+            // console.info(`[Xtoys 玩具多多] 已将真实设备 '${device.id}' 添加到命令流 Map。`);
 
             return mockPort;
 
@@ -376,36 +376,33 @@
                             console.info(`[Xtoys 玩具多多] 设备 '${connectionState.device.name}' (内部ID: ${connectionState.device.id}) 现在映射到 XToys Device ID '${incomingCommandId}'。`);
                         }
 
-                        // 目标连接状态始终是当前 writable 流所关联的 connectionState
-                        const targetConnectionState = connectionState;
+                        // 移除了冗余的 targetConnectionState 变量和对其的检查，直接使用 connectionState
+                        // if (!connectionState) {
+                        //     console.warn(`[Xtoys 玩具多多] 未找到目标连接状态 (来自 XToys Device ID: ${incomingCommandId || 'N/A'})。命令已跳过。`, command);
+                        //     return;
+                        // }
 
-                        // 确保目标连接状态存在
-                        if (!targetConnectionState) {
-                            console.warn(`[Xtoys 玩具多多] 未找到目标连接状态 (来自 XToys Device ID: ${incomingCommandId || 'N/A'})。命令已跳过。`, command);
-                            return;
-                        }
-
-                        // 使用目标设备的协议转换命令
-                        const dataPacket = targetConnectionState.activeProtocol?.transform(command);
+                        // 使用当前 connectionState 的协议转换命令
+                        const dataPacket = connectionState.activeProtocol?.transform(command);
 
                         if (dataPacket) {
                             const hexString = `${Array.from(dataPacket).map(b => b.toString(16).padStart(2, '0')).join(' ')}`;
 
                             if (DEBUG_MODE) {
                                 // 使用最合适的名称进行调试日志
-                                const logDeviceName = targetConnectionState.xtoysDeviceId || targetConnectionState.device?.name || targetConnectionState.device?.id;
+                                const logDeviceName = connectionState.xtoysDeviceId || connectionState.device?.name || connectionState.device?.id;
                                 console.debug(`[Xtoys 玩具多多 调试模式] 正在路由到设备 '${logDeviceName}' (XToys Device ID: ${incomingCommandId || 'N/A'})。发送 HEX 数据: ${hexString}`);
                             } else {
-                                if (!targetConnectionState.writeCharacteristic) {
-                                    console.error(`[Xtoys 玩具多多] 设备 '${targetConnectionState.device?.name || targetConnectionState.device?.id}' 写入失败: 此端口的蓝牙特性不可用。`);
+                                if (!connectionState.writeCharacteristic) {
+                                    console.error(`[Xtoys 玩具多多] 设备 '${connectionState.device?.name || connectionState.device?.id}' 写入失败: 此端口的蓝牙特性不可用。`);
                                     throw new Error("此端口的蓝牙特性不可用。");
                                 }
-                                const logDeviceName = targetConnectionState.xtoysDeviceId || targetConnectionState.device?.name || targetConnectionState.device?.id;
+                                const logDeviceName = connectionState.xtoysDeviceId || connectionState.device?.name || connectionState.device?.id;
                                 console.debug(`[Xtoys 玩具多多] 正在路由到设备 '${logDeviceName}' (XToys Device ID: ${incomingCommandId || 'N/A'})。已转换为 HEX ${hexString} 并发送到蓝牙设备...`);
-                                await targetConnectionState.writeCharacteristic.writeValueWithoutResponse(dataPacket);
+                                await connectionState.writeCharacteristic.writeValueWithoutResponse(dataPacket);
                             }
                         } else {
-                            console.warn(`[Xtoys 玩具多多] 设备 '${targetConnectionState.device?.name || targetConnectionState.device?.id}' 未生成数据包，跳过写入操作。`);
+                            console.warn(`[Xtoys 玩具多多] 设备 '${connectionState.device?.name || connectionState.device?.id}' 未生成数据包，跳过写入操作。`);
                         }
                     } catch (error) {
                         console.error(`[Xtoys 玩具多多] 设备 ${deviceFriendlyName} 处理和写入数据失败:`, error);
