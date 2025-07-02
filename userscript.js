@@ -16,8 +16,8 @@
 // @grant         GM_setValue
 // @run-at        document-start
 // @icon          https://xtoys.app/icons/favicon-96x96.png
-// @downloadURL   https://raw.githubusercontent.com/forest-devil/More-XToys/main/userscript.js
-// @updateURL     https://raw.githubusercontent.com/forest-devil/More-XToys/main/userscript.js
+// @downloadURL https://raw.githubusercontent.com/forest-devil/More-XToys/main/userscript.js
+// @updateURL https://raw.githubusercontent.com/forest-devil/More-XToys/main/userscript.js
 // ==/UserScript==
 
 (() => {
