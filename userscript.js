@@ -2,7 +2,7 @@
 // @name          More XToys
 // @name:zh-CN    XToys 玩具多多
 // @namespace     https://github.com/forest-devil/
-// @version       1.42
+// @version       1.43
 // @description   Takes over XToys's custom serial port toy functionality, replacing it with custom Bluetooth toys (currently supporting Roussan).
 // @description:zh-CN 接管XToys的自定义串口功能，替换为通过蓝牙控制玩具（当前支持若仙）。
 // @author        forest-devil & Gemini
@@ -16,8 +16,8 @@
 // @grant         GM_setValue
 // @run-at        document-start
 // @icon          https://xtoys.app/icons/favicon-96x96.png
-// @downloadURL https://raw.githubusercontent.com/forest-devil/More-XToys/main/userscript.js
-// @updateURL https://raw.githubusercontent.com/forest-devil/More-XToys/main/userscript.js
+// @downloadURL   https://raw.githubusercontent.com/forest-devil/More-XToys/main/userscript.js
+// @updateURL     https://raw.githubusercontent.com/forest-devil/More-XToys/main/userscript.js
 // ==/UserScript==
 
 (() => {
@@ -144,15 +144,6 @@
             });
         }
 
-        // 移除了从 activeCommandStreams Map 中移除的逻辑，因为该 Map 已被移除。
-        // if (state.xtoysDeviceId && activeCommandStreams.has(state.xtoysDeviceId)) {
-        //     activeCommandStreams.delete(state.xtoysDeviceId);
-        //     console.info(`[Xtoys 玩具多多] 已移除 XToys Device ID 为 '${state.xtoysDeviceId}' 的命令流。`);
-        // } else if (activeCommandStreams.has(state.device?.id)) { // 如果没有 XToys Device ID，则回退到设备 ID
-        //      activeCommandStreams.delete(state.device.id);
-        //      console.info(`[Xtoys 玩具多多] 已移除设备 ID 为 '${state.device?.id}' 的命令流。`);
-        // }
-
         activeConnections.delete(deviceId);
         console.info(`[Xtoys 玩具多多] 已断开并移除设备 ${deviceFriendlyName} 的连接状态。当前活跃连接数: ${activeConnections.size}`);
     }
@@ -213,10 +204,6 @@
             activeConnections.set(debugDeviceId, debugConnectionState);
             const mockPort = createMockSerialPort(debugConnectionState);
             debugConnectionState.mockPortInstance = mockPort;
-
-            // 移除了将此模拟端口的可写流添加到全局路由 Map 中的逻辑，因为该 Map 已被移除。
-            // activeCommandStreams.set(debugDeviceId, mockPort.writable);
-            // console.info(`[Xtoys 玩具多多] 已将调试设备 '${debugDeviceId}' 添加到命令流 Map。`);
 
             return mockPort;
         }
@@ -308,36 +295,35 @@
             const mockPort = createMockSerialPort(newConnectionState);
             newConnectionState.mockPortInstance = mockPort; // 将模拟端口实例也保存到状态中
 
-            // 移除了将真实设备添加到命令流 Map 中的逻辑，因为该 Map 已被移除。
-            // activeCommandStreams.set(device.id, mockPort.writable);
-            // console.info(`[Xtoys 玩具多多] 已将真实设备 '${device.id}' 添加到命令流 Map。`);
-
             return mockPort;
 
         } catch (error) {
-            // 这里的 catch 会捕获 requestDevice 和 gatt.connect 过程中发生的错误，
-            // 以及内层 serviceError 重新抛出的错误，和 if (!activeProtocol || !writeCharacteristic) 抛出的错误。
             const deviceFriendlyName = device?.name || (device?.id ? `ID: ${device.id}` : '未知设备');
             let userMessageTitle = '[Xtoys 玩具多多] 连接失败';
             let userMessage = `尝试连接蓝牙设备 ${deviceFriendlyName} 时发生错误。`;
+            let suppressUiMessage = false; // 标记是否抑制UI消息
 
-            // 检查是否是用户取消选择或设备未找到
+            // 检查是否是用户取消选择 (NotFoundError)
             if (error.name === 'NotFoundError') {
-                userMessage = '未选择蓝牙设备或设备未找到。请确保设备已开启且在附近。';
+                userMessage = '蓝牙设备选择已取消。'; // 更精确的控制台消息
+                console.info(`[Xtoys 玩具多多] ${userMessage}`); // 记录为 info
+                suppressUiMessage = true; // 抑制UI对话框
             }
-            // 检查是否是连接或通信失败 (GATT operation failed 通常是底层连接问题)
+            // 检查是否是连接或通信失败 (NetworkError 或特定消息)
             else if (error.name === 'NetworkError' || error.message.includes('GATT operation failed') || error.message.includes('Failed to connect')) {
                 userMessage = `设备 ${deviceFriendlyName} 连接或通信失败。请检查设备是否已开启且在范围内，并尝试重新连接。`;
+                console.error(`[Xtoys 玩具多多] ${userMessageTitle}: ${userMessage}\n原始错误:`, error);
             }
             // 对于其他未被内层 serviceError 捕获的通用错误，或内层 serviceError 重新抛出的错误，使用通用提示
-            else if (!error.message.includes('找不到匹配的服务或写入特性') && !error.message.includes('找不到匹配的协议或写入特性')) { // 避免重复提示
+            else {
                  userMessage = `连接过程中发生未知错误: ${error.message}。请尝试重新连接。`;
+                 console.error(`[Xtoys 玩具多多] ${userMessageTitle}: ${userMessage}\n原始错误:`, error);
             }
-            // 如果是内层 serviceError 重新抛出的错误，其详细信息已经在内层打印，这里只记录
-            // 否则，打印通用的错误信息
 
-            showUserMessage(userMessageTitle, userMessage); // 显示UI提示
-            console.error(`[Xtoys 玩具多多] ${userMessageTitle}: ${userMessage}\n原始错误:`, error); // 同时输出到控制台
+            // 只有在不抑制UI消息的情况下才显示
+            if (!suppressUiMessage) {
+                showUserMessage(userMessageTitle, userMessage);
+            }
 
             // 如果连接失败，并且设备ID已经存在于 Map 中（可能是在选择设备后但在连接前失败），则将其移除
             if (device && activeConnections.has(device.id)) {
@@ -376,11 +362,8 @@
                             console.info(`[Xtoys 玩具多多] 设备 '${connectionState.device.name}' (内部ID: ${connectionState.device.id}) 现在映射到 XToys Device ID '${incomingCommandId}'。`);
                         }
 
+                        // 目标连接状态始终是当前 writable 流所关联的 connectionState
                         // 移除了冗余的 targetConnectionState 变量和对其的检查，直接使用 connectionState
-                        // if (!connectionState) {
-                        //     console.warn(`[Xtoys 玩具多多] 未找到目标连接状态 (来自 XToys Device ID: ${incomingCommandId || 'N/A'})。命令已跳过。`, command);
-                        //     return;
-                        // }
 
                         // 使用当前 connectionState 的协议转换命令
                         const dataPacket = connectionState.activeProtocol?.transform(command);
