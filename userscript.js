@@ -2,7 +2,7 @@
 // @name          More XToys
 // @name:zh-CN    XToys 玩具多多
 // @namespace     https://github.com/forest-devil/
-// @version       1.45
+// @version       1.46
 // @description   Takes over XToys's custom serial port toy functionality, replacing it with custom Bluetooth toys (currently supporting Roussan).
 // @description:zh-CN 接管XToys的自定义串口功能，替换为通过蓝牙控制玩具（当前支持若仙）。
 // @author        forest-devil & Gemini
@@ -207,15 +207,15 @@
         // 真实蓝牙设备连接逻辑
         let device;
         try {
-            let filters = Object.values(PROTOCOLS).map(p => ({ services: [p.serviceUUID] }));
+            //let filters = Object.values(PROTOCOLS).map(p => ({ services: [p.serviceUUID] }));
             // 获取所有协议的服务UUID，用于 optionalServices
             let optionalServices = Object.values(PROTOCOLS).map(p => p.serviceUUID);
 
-            console.info('[Xtoys 玩具多多] 正在请求蓝牙设备，搜索条件:', filters);
+            console.info('[Xtoys 玩具多多] 正在请求蓝牙设备，搜索条件:', /*filters*/ '所有设备');
             console.info('[Xtoys 玩具多多] 可选服务:', optionalServices); // 新增日志
 
             device = await navigator.bluetooth.requestDevice({
-                filters: filters,
+                acceptAllDevices: true,
                 optionalServices: optionalServices // 添加 optionalServices
             });
             const deviceFriendlyName = device.name || `ID: ${device.id}`;
