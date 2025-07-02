@@ -2,9 +2,9 @@
 // @name          More XToys
 // @name:zh-CN    XToys 玩具多多
 // @namespace     https://github.com/forest-devil/
-// @version       1.38
+// @version       1.39
 // @description   Takes over XToys's custom serial port toy functionality, replacing it with custom Bluetooth toys (currently supporting Roussan).
-// @description:zh-CN 接管XToys的自定义串口玩具功能，将其替换为自定义蓝牙玩具（当前支持若仙）。
+// @description:zh-CN 接管XToys的自定义串口功能，替换为通过蓝牙控制玩具（当前支持若仙）。
 // @author        forest-devil & Gemini
 // @license       Apache
 // @match         https://xtoys.app/*
@@ -49,7 +49,6 @@
     function toggleDebugMode() {
         DEBUG_MODE = !DEBUG_MODE;
         GM_setValue("DEBUG_MODE", DEBUG_MODE);
-        console.log(`[Xtoys 玩具多多] 调试模式: ${DEBUG_MODE ? '已开启' : '已关闭'}`);
         location.reload();
     }
 
@@ -140,7 +139,7 @@
         if (state.device?.gatt?.connected) {
             // 捕获 disconnect() Promise 的拒绝，避免 Uncaught (in promise) 错误
             state.device.gatt.disconnect().catch(e => {
-                console.log(`[Xtoys 玩具多多] 断开设备 ${deviceFriendlyName} GATT 连接时发生错误 (可能已断开):`, e);
+                console.warn(`[Xtoys 玩具多多] 断开设备 ${deviceFriendlyName} GATT 连接时发生错误 (可能已断开):`, e);
             });
         }
 
@@ -196,8 +195,8 @@
             const debugDeviceName = `调试设备 #${debugDeviceCounter}`;
             const mockUsbProductId = MOCK_USB_PRODUCT_ID_BASE + debugDeviceCounter; // 为每个调试设备生成唯一的 Product ID
 
-            console.log(`[Xtoys 玩具多多 调试模式] 正在使用协议 "${defaultProtocolName}" 模拟设备 "${debugDeviceName}"。`);
-            console.log(`[Xtoys 玩具多多 调试模式] 生成的设备ID: ${debugDeviceId}, 模拟 USB 产品ID: 0x${mockUsbProductId.toString(16)}`);
+            console.info(`[Xtoys 玩具多多 调试模式] 正在使用协议 "${defaultProtocolName}" 模拟设备 "${debugDeviceName}"。`);
+            console.info(`[Xtoys 玩具多多 调试模式] 生成的设备ID: ${debugDeviceId}, 模拟 USB 产品ID: 0x${mockUsbProductId.toString(16)}`);
 
             const debugConnectionState = {
                 device: { id: debugDeviceId, name: debugDeviceName }, // 模拟 device 对象，包含友好名称
@@ -216,7 +215,7 @@
 
             // 将此模拟端口的可写流添加到全局路由 Map 中，键为其内部 ID
             activeCommandStreams.set(debugDeviceId, mockPort.writable);
-            console.log(`[Xtoys 玩具多多] 已将调试设备 '${debugDeviceId}' 添加到命令流 Map。`);
+            console.info(`[Xtoys 玩具多多] 已将调试设备 '${debugDeviceId}' 添加到命令流 Map。`);
 
             return mockPort;
         }
@@ -224,16 +223,15 @@
         // 真实蓝牙设备连接逻辑
         let device;
         try {
-            console.log('[Xtoys 玩具多多] 正在请求蓝牙设备，服务 UUIDs:', Object.values(PROTOCOLS).map(p => p.serviceUUID));
-            device = await navigator.bluetooth.requestDevice({
-                filters: Object.values(PROTOCOLS).map(p => ({ services: [p.serviceUUID] }))
-            });
+            let filters = Object.values(PROTOCOLS).map(p => ({ services: [p.serviceUUID] }));
+            console.log('[Xtoys 玩具多多] 正在请求蓝牙设备，搜索条件:', filters);
+            device = await navigator.bluetooth.requestDevice({filters});
             const deviceFriendlyName = device.name || `ID: ${device.id}`;
-            console.log('[Xtoys 玩具多多] 已选择设备: %s', deviceFriendlyName);
+            console.info('[Xtoys 玩具多多] 已选择设备: %s', deviceFriendlyName);
 
             // 检查该设备是否已连接，如果已连接则复用其模拟端口
             if (activeConnections.has(device.id) && activeConnections.get(device.id).device?.gatt?.connected) {
-                console.log(`[Xtoys 玩具多多] 设备 ${deviceFriendlyName} 已连接。正在复用现有模拟端口。`);
+                console.info(`[Xtoys 玩具多多] 设备 ${deviceFriendlyName} 已连接。正在复用现有模拟端口。`);
                 return activeConnections.get(device.id).mockPortInstance;
             }
 
@@ -243,7 +241,7 @@
                 removeConnectionState(device.id); // 移除该设备的连接状态
             });
 
-            console.log(`[Xtoys 玩具多多] 正在连接设备 ${deviceFriendlyName} 的 GATT 服务器...`);
+            console.info(`[Xtoys 玩具多多] 正在连接设备 ${deviceFriendlyName} 的 GATT 服务器...`);
             const server = await device.gatt.connect();
 
             let activeProtocol = null;
@@ -255,14 +253,14 @@
                 try {
                     const service = await server.getPrimaryService(protocol.serviceUUID);
                     if (service) {
-                        console.log(`[Xtoys 玩具多多] 在设备 ${deviceFriendlyName} 上找到匹配的协议服务: "${protocolName}"`);
+                        console.info(`[Xtoys 玩具多多] 在设备 ${deviceFriendlyName} 上找到匹配的协议服务: "${protocolName}"`);
                         activeProtocol = protocol;
                         writeCharacteristic = await service.getCharacteristic(protocol.writeUUID);
                         try {
                             notifyCharacteristic = await service.getCharacteristic(protocol.notifyUUID);
                             await notifyCharacteristic.startNotifications();
                             notifyCharacteristic.addEventListener('characteristicvaluechanged', handleNotifications);
-                            console.log('[Xtoys 玩具多多] 已订阅通知。');
+                            console.info('[Xtoys 玩具多多] 已订阅通知。');
                         } catch (notifyError) {
                             console.warn('[Xtoys 玩具多多] 无法获取或订阅通知特性。', notifyError.message);
                         }
@@ -305,13 +303,13 @@
             };
             activeConnections.set(device.id, newConnectionState); // 将新连接存储到 Map 中
 
-            console.log(`[Xtoys 玩具多多] 设备 ${deviceFriendlyName} 蓝牙连接成功并准备就绪。模拟 USB 产品ID: 0x${mockUsbProductId.toString(16)}。当前活跃连接数: ${activeConnections.size}`);
+            console.info(`[Xtoys 玩具多多] 设备 ${deviceFriendlyName} 蓝牙连接成功并准备就绪。模拟 USB 产品ID: 0x${mockUsbProductId.toString(16)}。当前活跃连接数: ${activeConnections.size}`);
             const mockPort = createMockSerialPort(newConnectionState);
             newConnectionState.mockPortInstance = mockPort; // 将模拟端口实例也保存到状态中
 
             // 将真实设备添加到命令流 Map 中，键为蓝牙设备 ID
             activeCommandStreams.set(device.id, mockPort.writable);
-            console.log(`[Xtoys 玩具多多] 已将真实设备 '${device.id}' 添加到命令流 Map。`);
+            console.info(`[Xtoys 玩具多多] 已将真实设备 '${device.id}' 添加到命令流 Map。`);
 
             return mockPort;
 
@@ -389,7 +387,7 @@
                             if (!foundConnection && connectionState.device?.id?.startsWith('debug-device-')) {
                                 // 对于调试设备，如果它们发送 'id'，我们将其注册。
                                 connectionState.xtoysDeviceId = targetXToysDeviceId;
-                                console.log(`[Xtoys 玩具多多] 调试设备 '${connectionState.device.name}' 现在映射到 XToys Device ID '${targetXToysDeviceId}'。`);
+                                console.info(`[Xtoys 玩具多多] 调试设备 '${connectionState.device.name}' 现在映射到 XToys Device ID '${targetXToysDeviceId}'。`);
                             } else if (foundConnection) {
                                 // 找到了匹配 targetXToysDeviceId 的连接，使用其内部设备 ID 进行查找
                                 targetDeviceId = foundConnection.device.id;
@@ -418,7 +416,7 @@
                             if (DEBUG_MODE) {
                                 // 使用最合适的名称进行调试日志
                                 const logDeviceName = targetConnectionState.xtoysDeviceId || targetConnectionState.device?.name || targetConnectionState.device?.id;
-                                console.log(`[Xtoys 玩具多多 调试模式] 正在路由到设备 '${logDeviceName}' (XToys Device ID: ${targetXToysDeviceId || 'N/A'})。发送 HEX 数据: ${hexString}`);
+                                console.debug(`[Xtoys 玩具多多 调试模式] 正在路由到设备 '${logDeviceName}' (XToys Device ID: ${targetXToysDeviceId || 'N/A'})。发送 HEX 数据: ${hexString}`);
                             } else {
                                 if (!targetConnectionState.writeCharacteristic) {
                                     console.error(`[Xtoys 玩具多多] 设备 '${targetConnectionState.device?.name || targetConnectionState.device?.id}' 写入失败: 此端口的蓝牙特性不可用。`);
@@ -441,7 +439,7 @@
                     }
                 },
                 close: () => {
-                    console.log(`[Xtoys 玩具多多] 设备 ${deviceFriendlyName} 的可写流已关闭。`);
+                    console.info(`[Xtoys 玩具多多] 设备 ${deviceFriendlyName} 的可写流已关闭。`);
                     if (!DEBUG_MODE && connectionState.device?.gatt?.connected) {
                         removeConnectionState(connectionState.device.id);
                     }
@@ -454,7 +452,7 @@
                 }
             }),
             readable: new ReadableStream({
-                start: (controller) => { console.log(`[Xtoys 玩具多多] 设备 ${deviceFriendlyName} 的模拟可读流已启动。`); }
+                start: (controller) => { console.info(`[Xtoys 玩具多多] 设备 ${deviceFriendlyName} 的模拟可读流已启动。`); }
                 // TODO: 如果需要从蓝牙设备接收数据并推送到 ReadableStream，需要在这里实现
                 // 例如：在 handleNotifications 中将数据 enqueue 到 controller
             }),
@@ -467,11 +465,11 @@
                 deviceName: connectionState.xtoysDeviceId || connectionState.device?.name || `蓝牙设备 ${connectionState.device?.id?.substring(0, 8)}`
             }),
             open: async (options) => {
-                console.log(`[Xtoys 玩具多多] 设备 ${deviceFriendlyName} 的模拟端口已使用选项打开:`, options);
+                console.info(`[Xtoys 玩具多多] 设备 ${deviceFriendlyName} 的模拟端口已使用选项打开:`, options);
                 return Promise.resolve();
             },
             close: async () => {
-                console.log(`[Xtoys 玩具多多] 设备 ${deviceFriendlyName} 的模拟端口 close() 方法被调用。`);
+                console.info(`[Xtoys 玩具多多] 设备 ${deviceFriendlyName} 的模拟端口 close() 方法被调用。`);
                 try {
                     if (this.writable && !this.writable.locked) {
                         await this.writable.close();
@@ -479,7 +477,7 @@
                 } catch (e) {
                     // 优化：处理预期的 'Cannot close a ERRORED writable stream' 错误
                     if (e.message.includes("Cannot close a ERRORED writable stream")) {
-                        console.debug(`[Xtoys 玩具多多] 关闭设备 ${deviceFriendlyName} 的可写流时出错 (预期的错误，流可能已中止): ${e.message}`);
+                        console.warn(`[Xtoys 玩具多多] 关闭设备 ${deviceFriendlyName} 的可写流时出错 (预期的错误，流可能已中止): ${e.message}`);
                     } else {
                         // 对于其他非预期错误，仍然作为警告或错误处理
                         console.warn(`[Xtoys 玩具多多] 关闭设备 ${deviceFriendlyName} 的可写流时出错: ${e.message}`);
@@ -489,12 +487,12 @@
             setSignals: async () => {},
             getSignals: async () => ({}),
             forget: async () => {
-                console.log(`[Xtoys 玩具多多] 设备 ${deviceFriendlyName} 的 forget 方法被调用。正在断开连接。`);
+                console.info(`[Xtoys 玩具多多] 设备 ${deviceFriendlyName} 的 forget 方法被调用。正在断开连接。`);
                 await mockPort.close();
             }
         };
 
-        console.log(`[Xtoys 玩具多多] 已为设备 ${deviceFriendlyName} 创建模拟 SerialPort 对象。`, mockPort);
+        console.info(`[Xtoys 玩具多多] 已为设备 ${deviceFriendlyName} 创建模拟 SerialPort 对象。`, mockPort);
         return mockPort;
     }
 
@@ -517,7 +515,7 @@
             },
             writable: true
         });
-        console.info('[Xtoys 玩具多多] 未找到 navigator.serial，已创建模拟 API。');
+        console.warn('[Xtoys 玩具多多] 未找到 navigator.serial，已创建模拟 API。');
     }
 
     // --- 前端UI提示框相关变量和函数 ---
