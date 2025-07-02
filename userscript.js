@@ -2,7 +2,7 @@
 // @name          More XToys
 // @name:zh-CN    XToys 玩具多多
 // @namespace     https://github.com/forest-devil/
-// @version       1.44
+// @version       1.45
 // @description   Takes over XToys's custom serial port toy functionality, replacing it with custom Bluetooth toys (currently supporting Roussan).
 // @description:zh-CN 接管XToys的自定义串口功能，替换为通过蓝牙控制玩具（当前支持若仙）。
 // @author        forest-devil & Gemini
@@ -38,10 +38,6 @@
     const MOCK_USB_VENDOR_ID = 0x1A86;
     // MOCK_USB_PRODUCT_ID_BASE 提供了产品 ID 的起始基数，用于生成唯一 ID
     const MOCK_USB_PRODUCT_ID_BASE = 0x7523;
-
-    // 移除了 activeCommandStreams Map，因为它不再用于命令路由。
-    // /** @type {Map<string, WritableStream>} */
-    // const activeCommandStreams = new Map();
 
     /**
      * 切换调试模式并刷新页面。
@@ -212,8 +208,16 @@
         let device;
         try {
             let filters = Object.values(PROTOCOLS).map(p => ({ services: [p.serviceUUID] }));
+            // 获取所有协议的服务UUID，用于 optionalServices
+            let optionalServices = Object.values(PROTOCOLS).map(p => p.serviceUUID);
+
             console.info('[Xtoys 玩具多多] 正在请求蓝牙设备，搜索条件:', filters);
-            device = await navigator.bluetooth.requestDevice({acceptAllDevices: true});
+            console.info('[Xtoys 玩具多多] 可选服务:', optionalServices); // 新增日志
+
+            device = await navigator.bluetooth.requestDevice({
+                filters: filters,
+                optionalServices: optionalServices // 添加 optionalServices
+            });
             const deviceFriendlyName = device.name || `ID: ${device.id}`;
             console.info('[Xtoys 玩具多多] 已选择设备: %s', deviceFriendlyName);
 
@@ -285,7 +289,7 @@
                 notifyCharacteristic,
                 activeProtocol,
                 mockPortInstance: null, // 将在 createMockSerialPort 中赋值
-                xtoysDeviceId: undefined, // 在同一连接中，XToys能够保证id属性一致，所有命令要么都没有id属性，要么都相同
+                xtoysDeviceId: null, // 真实设备初始没有 XToys Device ID
                 usbVendorId: MOCK_USB_VENDOR_ID,
                 usbProductId: mockUsbProductId
             };
@@ -305,13 +309,18 @@
 
             // 检查是否是用户取消选择 (NotFoundError)
             if (error.name === 'NotFoundError') {
-                userMessage = '蓝牙设备选择已取消。';
-                console.info(`[Xtoys 玩具多多] ${userMessage}`);
+                userMessage = '蓝牙设备选择已取消。'; // 更精确的控制台消息
+                console.info(`[Xtoys 玩具多多] ${userMessage}`); // 记录为 info
                 suppressUiMessage = true; // 抑制UI对话框
             }
             // 检查是否是连接或通信失败 (NetworkError 或特定消息)
             else if (error.name === 'NetworkError' || error.message.includes('GATT operation failed') || error.message.includes('Failed to connect')) {
                 userMessage = `设备 ${deviceFriendlyName} 连接或通信失败。请检查设备是否已开启且在范围内，并尝试重新连接。`;
+                console.error(`[Xtoys 玩具多多] ${userMessageTitle}: ${userMessage}\n原始错误:`, error);
+            }
+            // 对于 Origin is not allowed to access any service 错误
+            else if (error.name === 'SecurityError' && error.message.includes('Origin is not allowed to access any service')) {
+                userMessage = `连接设备 ${deviceFriendlyName} 失败：浏览器安全策略限制了对蓝牙服务的访问。请确保所有要访问的服务 UUID 都已添加到 'optionalServices' 中。`;
                 console.error(`[Xtoys 玩具多多] ${userMessageTitle}: ${userMessage}\n原始错误:`, error);
             }
             // 对于其他未被内层 serviceError 捕获的通用错误，或内层 serviceError 重新抛出的错误，使用通用提示
@@ -355,8 +364,9 @@
                         const incomingCommandId = command.id;
 
                         // 根据 XToys 的保证：在一次连接中，给设备传输的所有命令的id是一致的。
-                        // 因此，如果命令中包含 ID，就用它更新。command的id不会变，所以不处理变化的情况
-                        if (incomingCommandId && connectionState.xtoysDeviceId === undefined) {
+                        // 因此，如果命令中包含 ID，并且它与当前连接的 xtoysDeviceId 不同，
+                        // 我们就更新 xtoysDeviceId。这确保了 xtoysDeviceId 始终是 XToys 正在使用的 ID。
+                        if (incomingCommandId && connectionState.xtoysDeviceId !== incomingCommandId) {
                             connectionState.xtoysDeviceId = incomingCommandId;
                             console.info(`[Xtoys 玩具多多] 设备 '${connectionState.device.name}' (内部ID: ${connectionState.device.id}) 现在映射到 XToys Device ID '${incomingCommandId}'。`);
                         }
@@ -429,12 +439,12 @@
                         await this.writable.close();
                     }
                 } catch (e) {
-                    // 处理预期的 'Cannot close a ERRORED writable stream' 错误
+                    // 优化：处理预期的 'Cannot close a ERRORED writable stream' 错误
                     if (e.message.includes("Cannot close a ERRORED writable stream")) {
                         console.warn(`[Xtoys 玩具多多] 关闭设备 ${deviceFriendlyName} 的可写流时出错 (预期的错误，流可能已中止): ${e.message}`);
                     } else {
-                        // 对于其他非预期错误，仍然作为错误处理
-                        console.error(`[Xtoys 玩具多多] 关闭设备 ${deviceFriendlyName} 的可写流时出错: ${e.message}`);
+                        // 对于其他非预期错误，仍然作为警告或错误处理
+                        console.warn(`[Xtoys 玩具多多] 关闭设备 ${deviceFriendlyName} 的可写流时出错: ${e.message}`);
                     }
                 }
             },
